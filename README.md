@@ -94,7 +94,7 @@ With `LLM_PROVIDER=groq`, `llm_use.provider` truthfully records `groq`. The epic
 
 **Google / LinkedIn (Stories 3–4).** `/auth/{provider}/start` redirects to `AUTH_SHIM_URL` with `provider=…`, a signed `state` and the redirect URI. The shim's local login page offers **Continue**, **Cancel** (→ `error=access_denied`) and **Simulate exchange failure** (`?simulate=error`). The callback exchanges the code with a **stubbed exchange function** returning fixture claims — Google `google-fake-001` / `jordan@example.com` / Jordan Blake; LinkedIn `linkedin-fake-001` / `priya@example.com` / Priya Raman — then runs the conflict check (`SELECT … WHERE coach_email = …`, different `auth_provider` → conflict), downloads the picture into MinIO at `coaches/{id}/photo.jpg` (or `orgs/{org_id}/coaches/{id}/photo.jpg`), inserts the coach (`active`, `cognito_sub`, `photo_s3_key`) and redirects to Page 2. A returning coach with the same provider is signed in rather than duplicated.
 
-**Email magic link (Story 5).** `POST /api/v1/auth/magic-link` runs the conflict check, inserts a `pending` coach (`auth_provider='email'`, `cognito_sub` null), stores a token (24 h) and emails `http://localhost:4000/verify?token=…` through Mailpit. `/verify`: unknown token → provider/config error; used or expired → expired-link screen; otherwise `used_at = now()`, `status = 'active'`, Page 2. The token column holds a SHA-256 of the token; the raw value exists only in the email.
+**Email magic link (Story 5).** `POST /api/v1/auth/magic-link` runs the conflict check, inserts a `pending` coach (`auth_provider='email'`, `cognito_sub` null), stores a token (24 h) and emails `http://localhost:4000/verify?token=…` through Mailpit. `/verify`: unknown token → provider/config error; used or expired → expired-link screen; otherwise `used_at = now()`, `status = 'active'`, Page 2. The token is stored as generated in `magic_link_tokens.token` (Story 5).
 
 **Fallback screens (Story 6)** — also reachable directly: `/signin/error?reason=provider|cancelled|conflict|expired&provider=google|linkedin|email`. No raw error text is ever shown.
 
@@ -188,5 +188,5 @@ The runner removes rows belonging to the fixture coaches (`jordan@example.com`, 
 - **Conflict copy** is the wireframe's exact text, which mentions a password; password login doesn't exist, so the primary button starts the magic-link flow.
 - Fallback copy names the provider actually used (the wireframe hard-codes LinkedIn / Google).
 - **Groq** is available via `LLM_PROVIDER` for local runs; the epic specifies Anthropic.
-- Returning coaches with the same provider sign in instead of creating a duplicate row. Magic tokens are stored hashed.
+- Returning coaches with the same provider sign in instead of creating a duplicate row.
 - Out of scope by design: package functionality, other nav items, client features, real OAuth/Cognito/S3; institute flows beyond tenancy detection.

@@ -107,8 +107,8 @@ def generate_token() -> str:
 
 
 def hash_token(raw: str) -> str:
-    # The token column stores a SHA-256 of the token; the raw value only exists in the email.
-    return hashlib.sha256(raw.encode()).hexdigest()
+    # Story 5: the token itself is stored in magic_link_tokens.token.
+    return raw
 
 
 def insert_token(token_hash: str, coach_id: str, ttl_hours: int):
