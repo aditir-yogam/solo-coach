@@ -34,7 +34,8 @@ services:
       - "8025:8025"   # Web inbox — open in browser to click links
 
   minio:
-    image: minio/minio
+    image: cgr.dev/chainguard/minio:latest
+    user: "0:0"
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: devkey

@@ -182,6 +182,7 @@ The runner removes rows belonging to the fixture coaches (`jordan@example.com`, 
 | 17 | Presigned photo URL resolves to the image | runner + open the URL |
 
 ## 11. Decisions and open items
+- The Starter Pack's `minio/minio` image no longer downloads, so docker-compose uses `cgr.dev/chainguard/minio` (same MinIO server) with `user: "0:0"` for the local volume.
 
 - **Expired-link copy** isn't in the fallback wireframe (it has three states); the text in `frontend/src/lib/signinCopy.js` is a placeholder in the same tone.
 - **Conflict copy** is the wireframe's exact text, which mentions a password; password login doesn't exist, so the primary button starts the magic-link flow.
