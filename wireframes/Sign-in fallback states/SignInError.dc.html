@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sign-in error state</title>
+<script src="./vendor/react.js"></script>
+<script src="./vendor/react-dom.js"></script>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  body{margin:0;font-family:'Inter var',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:{{bg}};}
+  a{color:{{accent}};text-decoration:none;}
+  a:hover{color:{{accentDark}};}
+  button:focus-visible{outline:2px solid {{accent}};outline-offset:2px;}
+</style>
+</helmet>
+<div style="width:1440px;height:900px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;background:{{bg}};color:{{ink}};font-size:15px;line-height:1.5;">
+
+  <div style="width:440px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:22px;">
+
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div style="width:32px;height:32px;border-radius:8px;background:{{accent}};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;color:#FFFFFF;">C</div>
+      <div style="font-weight:700;font-size:16px;letter-spacing:0.02em;color:{{ink}};">Coaching Platform</div>
+    </div>
+
+    <div style="width:64px;height:64px;border-radius:50%;background:#F3ECFA;display:flex;align-items:center;justify-content:center;">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="{{accent}}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16h.01"></path></svg>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <h2 style="margin:0;font-size:22px;font-weight:700;color:{{ink}};">{{heading}}</h2>
+      <p style="margin:0;font-size:14.5px;color:#6B6280;">{{subtext}}</p>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:10px;width:100%;">
+      <button type="button" style="width:100%;box-sizing:border-box;padding:12px 20px;border-radius:10px;border:none;background:{{accent}};color:#FFFFFF;font-size:14.5px;font-weight:700;cursor:pointer;">{{primaryAction}}</button>
+      <button type="button" style="width:100%;box-sizing:border-box;padding:12px 20px;border-radius:10px;border:1.5px solid #E4DAF2;background:#FFFFFF;color:{{ink}};font-size:14.5px;font-weight:600;cursor:pointer;">{{secondaryAction}}</button>
+    </div>
+
+    <a href="#" style="font-size:13px;color:#8A7DA8;">Contact support</a>
+
+    <div style="margin-top:18px;padding-top:18px;border-top:1px solid #E4DAF2;width:100%;display:flex;flex-direction:column;gap:10px;">
+      <div style="font-size:11.5px;font-weight:700;letter-spacing:0.05em;color:#9A8FB5;text-transform:uppercase;">Preview other states</div>
+      <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+        <button type="button" onClick="{{showProviderError}}" style="{{tabStyle_provider}}">Provider/config error</button>
+        <button type="button" onClick="{{showCancelled}}" style="{{tabStyle_cancelled}}">User cancelled</button>
+        <button type="button" onClick="{{showConflict}}" style="{{tabStyle_conflict}}">Account conflict</button>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{
+  "bg":{"editor":"color","default":"#F6F2FC"},
+  "accent":{"editor":"color","default":"#6D3FA0"},
+  "accentDark":{"editor":"color","default":"#4E1F86"},
+  "ink":{"editor":"color","default":"#241B3D"},
+  "$preview":{"width":1440,"height":900}
+}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { scenario: 'provider_error' };
+  }
+
+  tabStyle(active) {
+    const accent = this.props.accent ?? '#6D3FA0';
+    return [
+      'padding:6px 12px','border-radius:999px','font-size:12.5px','font-weight:600','cursor:pointer',
+      active ? ('border:1.5px solid ' + accent) : 'border:1.5px solid #E4DAF2',
+      active ? 'background:#F3ECFA' : 'background:#FFFFFF',
+      active ? ('color:' + accent) : 'color:#8A7DA8'
+    ].filter(Boolean).join(';');
+  }
+
+  renderVals() {
+    const scenario = this.state.scenario;
+    const copy = {
+      provider_error: {
+        heading: "We couldn't connect to LinkedIn",
+        subtext: "Something went wrong on our end finishing sign-in — this wasn't anything you did. You can try again, or sign up with your email instead.",
+        primaryAction: "Try again",
+        secondaryAction: "Continue with email"
+      },
+      cancelled: {
+        heading: "Sign-in cancelled",
+        subtext: "You closed the window before finishing sign-in with LinkedIn. No account was created — you can pick up where you left off.",
+        primaryAction: "Back to sign up",
+        secondaryAction: "Continue with email instead"
+      },
+      conflict: {
+        heading: "This email is already registered",
+        subtext: "An account with this email already exists using a password. Log in that way instead, or use a different email to sign up with Google.",
+        primaryAction: "Log in with email & password",
+        secondaryAction: "Use a different email"
+      }
+    }[scenario];
+
+    return {
+      bg: this.props.bg ?? '#F6F2FC',
+      accent: this.props.accent ?? '#6D3FA0',
+      accentDark: this.props.accentDark ?? '#4E1F86',
+      ink: this.props.ink ?? '#241B3D',
+      heading: copy.heading,
+      subtext: copy.subtext,
+      primaryAction: copy.primaryAction,
+      secondaryAction: copy.secondaryAction,
+      tabStyle_provider: this.tabStyle(scenario === 'provider_error'),
+      tabStyle_cancelled: this.tabStyle(scenario === 'cancelled'),
+      tabStyle_conflict: this.tabStyle(scenario === 'conflict'),
+      showProviderError: () => this.setState({ scenario: 'provider_error' }),
+      showCancelled: () => this.setState({ scenario: 'cancelled' }),
+      showConflict: () => this.setState({ scenario: 'conflict' })
+    };
+  }
+}
+</script>
+</body>
+</html>

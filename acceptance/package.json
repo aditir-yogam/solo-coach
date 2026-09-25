@@ -1,0 +1,9 @@
+{
+  "name": "solo-coach-acceptance",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Automated checks for the 17 acceptance scenarios, run against the live local stack",
+  "scripts": { "test": "node run.js" },
+  "engines": { "node": ">=20" },
+  "dependencies": { "pg": "^8.13.1" }
+}
