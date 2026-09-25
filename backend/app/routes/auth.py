@@ -1,21 +1,28 @@
 """Sign-in: Google / LinkedIn via the fake shim (Stories 3, 4), email magic link
 (Story 5). Every failure maps to one of the four fallback screens (Story 6);
-no raw error text ever reaches the browser."""
+no raw error text ever reaches the browser.
+
+Epic 1 addendum (email path only): the magic link is used once, to prove the
+email. /verify marks the token used but leaves the coach 'pending' and sends
+them to Set password; saving a password (dev_local_credentials) is what makes
+the account 'active'. Returning email coaches log in with email + password.
+One email = one account: signing up again with a registered email is refused."""
 import time
 from urllib.parse import urlencode
 
 import psycopg
 from fastapi import APIRouter, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
-from .. import logger, repositories as repo, storage
+from .. import db, dev_credentials, logger, repositories as repo, storage
 from ..auth_shim import ExchangeError, exchange_code
 from ..config import settings
 from ..constants import PROVIDERS
 from ..errors import AppError
 from ..mailer import send_magic_link
-from ..session import clear_session, new_state, set_oauth_state, set_session, take_oauth_state
-from ..validation import normalize_email, normalize_name, resolve_org
+from ..session import (clear_password_setup, clear_session, get_password_setup_coach_id, new_state,
+                       set_oauth_state, set_password_setup, set_session, take_oauth_state)
+from ..validation import normalize_email, normalize_name, resolve_org, validate_new_password
 
 router = APIRouter()
 
@@ -117,23 +124,34 @@ _RESEND_WINDOW = 15.0
 
 @router.post("/api/v1/auth/magic-link")
 async def request_magic_link(request: Request):
+    """Page 1 email sign-up. Also used by "Resend link" on the Check-your-email
+    screen (resend=true), which is only allowed for a still-pending email coach."""
     body = await request.json()
     email = normalize_email(body.get("email"))
     name = normalize_name(body.get("name"), required=False)
+    resend = body.get("resend") is True
     coach_type, org_id = resolve_org(body.get("org"))
-
-    if time.time() - _recent.get(email, 0) < _RESEND_WINDOW:  # double-submit guard
-        return {"ok": True, "email": email}
 
     existing = repo.coach_by_email(email)
     if existing and existing["auth_provider"] != "email":
         raise AppError(409, "This email is already registered.", "account_conflict")
     if existing and existing["status"] == "deactivated":
         raise AppError(403, "This account is not available.", "account_unavailable")
-    if existing:
+    if existing and existing["status"] == "active":
+        # One email = one account. A registered coach logs in instead.
+        raise AppError(409, "An account with this email already exists. Please log in instead.", "email_registered")
+    if existing and not resend:
+        # Registered but the sign-up link hasn't been used yet.
+        raise AppError(409, "This email is already registered but not verified yet. Check your inbox for the "
+                            "sign-in link, or resend it.", "email_pending")
+    if resend and not existing:
+        raise AppError(400, "Please sign up first.", "not_registered")
+
+    if time.time() - _recent.get(email, 0) < _RESEND_WINDOW:  # double-submit guard
+        return {"ok": True, "email": email}
+
+    if existing:  # resend for a pending email coach
         coach_id = existing["coach_id"]
-        if existing["status"] == "pending" and name:
-            repo.set_pending_name(coach_id, name)
     else:
         if not name:
             raise AppError(400, "Please enter your full name.", "name_required")
@@ -164,8 +182,69 @@ def verify(token: str = ""):
         return fallback("provider", "email")
     if status in ("used", "expired"):
         return fallback("expired", "email")
-    resp = RedirectResponse("/personalize", status_code=302)
-    set_session(resp, coach_id)
+    # Addendum Story 1: token is now used, status stays 'pending'. Next: Set password.
+    resp = RedirectResponse("/set-password", status_code=302)
+    clear_session(resp)
+    set_password_setup(resp, coach_id)
+    return resp
+
+
+def _setup_coach(request: Request) -> dict:
+    """The pending email coach allowed to set a password right now, or 401."""
+    coach_id = get_password_setup_coach_id(request)
+    coach = repo.coach_by_id(coach_id) if coach_id else None
+    if (not coach or coach["auth_provider"] != "email" or coach["status"] != "pending"
+            or dev_credentials.has_password(coach_id)):
+        raise AppError(401, "This link has already been used. Please log in or request a new link.", "setup_expired")
+    return coach
+
+
+@router.get("/api/v1/auth/password-setup")
+def password_setup(request: Request):
+    coach = _setup_coach(request)
+    return {"email": coach["coach_email"], "name": coach["coach_name"]}
+
+
+@router.post("/api/v1/auth/set-password")
+async def set_password(request: Request):
+    body = await request.json()
+    coach = _setup_coach(request)
+    password = validate_new_password(body.get("password"), body.get("confirm_password"))
+    password_hash = dev_credentials.hash_password(password)
+    with db.transaction() as conn:
+        locked = repo.lock_coach(conn, coach["coach_id"])
+        if not locked or locked["status"] != "pending":
+            raise AppError(401, "This link has already been used. Please log in or request a new link.", "setup_expired")
+        if not dev_credentials.insert_credentials(conn, coach["coach_id"], password_hash):
+            raise AppError(409, "A password is already set for this account. Please log in.", "password_exists")
+        repo.activate_coach(conn, coach["coach_id"])  # only now: pending -> active
+    logger.info("password set, coach activated", coach_id=coach["coach_id"])
+    resp = JSONResponse({"ok": True, "redirect": "/personalize"})
+    clear_password_setup(resp)
+    set_session(resp, coach["coach_id"])
+    return resp
+
+
+_LOGIN_FAILED = "Email or password is incorrect."
+
+
+@router.post("/api/v1/auth/login")
+async def login(request: Request):
+    """Addendum Story 2. Wrong email or password -> plain 401 shown on the Login
+    screen itself (not a fallback screen). Right -> straight to Portfolio."""
+    body = await request.json()
+    email = normalize_email(body.get("email"))
+    password = str(body.get("password") or "")
+    coach = repo.coach_by_email(email)
+    stored = None
+    if coach and coach["auth_provider"] == "email" and coach["status"] == "active":
+        stored = dev_credentials.password_hash_for(coach["coach_id"])
+    if not password or not dev_credentials.verify_or_dummy(password, stored):
+        logger.info("email login failed")
+        raise AppError(401, _LOGIN_FAILED, "invalid_credentials")
+    resp = JSONResponse({"ok": True, "redirect": "/portfolio"})
+    clear_password_setup(resp)
+    set_session(resp, coach["coach_id"])
     return resp
 
 

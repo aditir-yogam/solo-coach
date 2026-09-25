@@ -170,3 +170,21 @@ def validate_portfolio_patch(body, allowed_photo_key: str) -> dict:
                 raise AppError(400, "Invalid photo reference.", "photo_key_invalid")
             out[key] = value
     return out
+
+
+# Epic 1 addendum: Set password screen.
+PASSWORD_MIN, PASSWORD_MAX = 8, 128
+
+
+def validate_new_password(password, confirm) -> str:
+    password = "" if password is None else str(password)
+    confirm = "" if confirm is None else str(confirm)
+    if not password:
+        raise AppError(400, "Please choose a password.", "password_required")
+    if password != confirm:
+        raise AppError(400, "Passwords don't match.", "password_mismatch")
+    if len(password) < PASSWORD_MIN:
+        raise AppError(400, f"Use at least {PASSWORD_MIN} characters.", "password_too_short")
+    if len(password) > PASSWORD_MAX:
+        raise AppError(400, f"Use {PASSWORD_MAX} characters or fewer.", "password_too_long")
+    return password

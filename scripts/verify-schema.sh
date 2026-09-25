@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Proves the live database matches init.sql exactly: same 4 tables, same
+# Proves the live database matches init.sql exactly: same tables, same
 # columns/types/defaults/nullability, same CHECK constraints — nothing added.
 set -euo pipefail
 cd "$(dirname "$0")/.."

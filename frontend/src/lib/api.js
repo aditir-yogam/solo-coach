@@ -37,7 +37,13 @@ const coach = (id) => `/api/v1/app/coaches/${encodeURIComponent(id)}`;
 
 export const api = {
   me: (opts) => request('/api/v1/app/me', opts),
-  requestMagicLink: (name, email, org) => request('/api/v1/auth/magic-link', { method: 'POST', json: { name, email, org } }),
+  requestMagicLink: (name, email, org, resend = false) =>
+    request('/api/v1/auth/magic-link', { method: 'POST', json: { name, email, org, resend } }),
+  // Epic 1 addendum: set password after the one-time link, then email + password login.
+  passwordSetup: () => request('/api/v1/auth/password-setup'),
+  setPassword: (password, confirmPassword) =>
+    request('/api/v1/auth/set-password', { method: 'POST', json: { password, confirm_password: confirmPassword } }),
+  login: (email, password) => request('/api/v1/auth/login', { method: 'POST', json: { email, password } }),
   personalize: (id, formData) => request(`${coach(id)}/personalize`, { method: 'POST', formData }),
   generateStory: (id) => request(`${coach(id)}/story/generate`, { method: 'POST' }),
   getPortfolio: (id, opts) => request(`${coach(id)}/portfolio`, opts),

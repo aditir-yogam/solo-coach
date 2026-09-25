@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-// Acceptance runner for the 17 testing scenarios in the (revised) epic.
+// Acceptance runner for the 17 testing scenarios in the (revised) epic, plus
+// the 7 scenarios of the Epic 1 addendum (set password + return login, A1–A7)
+// and the one-email-one-account rule (D).
 //
 //   docker compose up --build        (in one terminal)
 //   cd acceptance && npm install && npm test
@@ -23,6 +25,7 @@ const GEN_TIMEOUT_MS = Number(process.env.GEN_TIMEOUT_MS || 150000);
 const RUN = Date.now().toString(36);
 const GOOGLE_EMAIL = 'jordan@example.com';
 const LINKEDIN_EMAIL = 'priya@example.com';
+const TEST_PASSWORD = 'correct-horse-42';
 
 const results = [];
 const db = new Client({ connectionString: DB_URL.replace(/^postgresql:/, 'postgres:') });
@@ -115,12 +118,25 @@ async function mailFor(email) {
   return null;
 }
 
+// Addendum: link click -> Set password (still pending) -> password saved -> active, Page 2.
+async function setPassword(jar, password, confirm = password) {
+  const res = await req(jar, '/api/v1/auth/set-password', json('POST', { password, confirm_password: confirm }));
+  return { status: res.status, body: await res.json().catch(() => ({})) };
+}
+
 async function magicSignUp(email, name, org = '') {
   await req(null, '/api/v1/auth/magic-link', json('POST', { name, email, org }));
   const mail = await mailFor(email);
   const jar = new Jar();
   const click = await req(jar, mail.link);
-  return { jar, location: loc(click) };
+  const set = await setPassword(jar, TEST_PASSWORD);
+  return { jar, clickLocation: loc(click), location: set.body.redirect };
+}
+
+async function login(email, password) {
+  const jar = new Jar();
+  const res = await req(jar, '/api/v1/auth/login', json('POST', { email, password }));
+  return { jar, status: res.status, body: await res.json().catch(() => ({})) };
 }
 
 const coachByEmail = async (email) => (await q('SELECT * FROM coaches WHERE lower(coach_email) = lower($1)', [email]))[0];
@@ -194,7 +210,7 @@ async function main() {
   );
   const ids = old.map((r) => r.coach_id);
   if (ids.length) {
-    for (const t of ['llm_use', 'tool_use', 'magic_link_tokens']) await q(`DELETE FROM ${t} WHERE coach_id = ANY($1)`, [ids]);
+    for (const t of ['llm_use', 'tool_use', 'magic_link_tokens', 'dev_local_credentials']) await q(`DELETE FROM ${t} WHERE coach_id = ANY($1)`, [ids]);
     await q('DELETE FROM coaches WHERE coach_id = ANY($1)', [ids]);
   }
   console.log(`Acceptance run ${RUN} against ${APP} (cleared ${ids.length} fixture/test coaches from earlier runs)`);
@@ -242,15 +258,19 @@ async function main() {
     magic.link = mail.link;
   }, 'open http://localhost:8025 and see the email.');
 
-  await test(4, 'Magic link → used_at set, active, Page 2 (not before)', async (d) => {
+  await test(4, 'Magic link → used_at set → Set password → active, Page 2 (not before)', async (d) => {
     const jar = new Jar();
     expect(d, (await req(jar, '/api/v1/app/me')).status === 401, 'before clicking: Page 2 API returns 401');
     const click = await req(jar, magic.link);
-    expect(d, loc(click) === '/personalize', `click → ${loc(click)}`);
-    const c = await coachByEmail(magicA);
+    expect(d, loc(click) === '/set-password', `click → ${loc(click)} (addendum: password step first)`);
+    let c = await coachByEmail(magicA);
     const [t] = await q('SELECT used_at FROM magic_link_tokens WHERE coach_id = $1', [c.coach_id]);
-    expect(d, c.status === 'active' && t.used_at !== null, `status=${c.status}, used_at set`);
-    expect(d, (await req(jar, '/api/v1/app/me')).status === 200, 'after clicking: Page 2 API reachable');
+    expect(d, c.status === 'pending' && t.used_at !== null, `after click: status=${c.status}, used_at set`);
+    expect(d, (await req(jar, '/api/v1/app/me')).status === 401, 'after click, before password: Page 2 API still 401');
+    const set = await setPassword(jar, TEST_PASSWORD);
+    c = await coachByEmail(magicA);
+    expect(d, set.status === 200 && set.body.redirect === '/personalize' && c.status === 'active', `password set → ${set.body.redirect}, status=${c.status}`);
+    expect(d, (await req(jar, '/api/v1/app/me')).status === 200, 'after password: Page 2 API reachable');
     magic.jar = jar;
   });
 
@@ -261,6 +281,7 @@ async function main() {
     const email = `exp.${RUN}.acceptance@example.com`;
     await req(null, '/api/v1/auth/magic-link', json('POST', { name: 'Expired Test', email }));
     const mail = await mailFor(email);
+    magic.expiredEmail = email;
     const c = await coachByEmail(email);
     await q("UPDATE magic_link_tokens SET expires_at = now() - interval '1 hour' WHERE coach_id = $1", [c.coach_id]);
     const click = await req(new Jar(), mail.link);
@@ -424,11 +445,106 @@ async function main() {
     expect(d, solo.coach_type === 'SO' && solo.org_id === null, '/join without org → SO, org_id null');
   });
 
+
+  // ---------------------------------------------------------------- one email, one account
+  await test('D', 'Same email signs up again → refused with a clear error, no new row or link', async (d) => {
+    const [before] = await q('SELECT count(*)::int n FROM magic_link_tokens t JOIN coaches c USING (coach_id) WHERE lower(c.coach_email) = $1', [magicA]);
+    const again = await req(null, '/api/v1/auth/magic-link', json('POST', { name: 'Maya Again', email: magicA }));
+    const body = await again.json();
+    expect(d, again.status === 409 && body.error === 'email_registered', `active email → ${again.status} ${body.error}: "${body.message}"`);
+    const pend = await req(null, '/api/v1/auth/magic-link', json('POST', { name: 'Exp Again', email: magic.expiredEmail }));
+    const pbody = await pend.json();
+    expect(d, pend.status === 409 && pbody.error === 'email_pending', `pending (unverified) email → ${pend.status} ${pbody.error}`);
+    const [rows] = await q('SELECT count(*)::int n FROM coaches WHERE lower(coach_email) = $1', [magicA]);
+    const [after] = await q('SELECT count(*)::int n FROM magic_link_tokens t JOIN coaches c USING (coach_id) WHERE lower(c.coach_email) = $1', [magicA]);
+    expect(d, rows.n === 1 && after.n === before.n, `still one coach row, no new link (${before.n} → ${after.n})`);
+    const pendingRow = await coachByEmail(magic.expiredEmail);
+    expect(d, pendingRow.status === 'pending', `a signed-up coach who never used the link shows status=${pendingRow.status}`);
+  }, 'enter an already-registered email on /join — an inline error with a "Log in" link appears.');
+
+  // ---------------------------------------------------------------- Epic 1 addendum
+  const addA = `pw.${RUN}.acceptance@example.com`;
+  const add = {};
+  await test('A1', 'Fresh magic link → Set Password screen, status still pending', async (d) => {
+    await req(null, '/api/v1/auth/magic-link', json('POST', { name: 'Pat Password', email: addA }));
+    const mail = await mailFor(addA);
+    add.link = mail.link;
+    add.jar = new Jar();
+    const click = await req(add.jar, mail.link);
+    expect(d, loc(click) === '/set-password', `click → ${loc(click)}`);
+    const c = await coachByEmail(addA);
+    add.id = c.coach_id;
+    expect(d, c.status === 'pending', `status = ${c.status} at this exact point`);
+    const [t] = await q('SELECT used_at FROM magic_link_tokens WHERE coach_id = $1', [c.coach_id]);
+    expect(d, t.used_at !== null, 'token marked used');
+    const setup = await (await req(add.jar, '/api/v1/auth/password-setup')).json();
+    expect(d, setup.email === addA, `Set password screen knows the email (${setup.email})`);
+  }, 'click the Mailpit link — the "Set your password" screen appears.');
+
+  await test('A2', 'Password ≠ Confirm → rejected with a clear message, no row written', async (d) => {
+    const r = await setPassword(add.jar, 'first-value-1', 'second-value-2');
+    expect(d, r.status === 400 && r.body.error === 'password_mismatch', `→ ${r.status} ${r.body.error}: "${r.body.message}"`);
+    const [n] = await q('SELECT count(*)::int n FROM dev_local_credentials WHERE coach_id = $1', [add.id]);
+    expect(d, n.n === 0, 'no dev_local_credentials row');
+    expect(d, (await coachByEmail(addA)).status === 'pending', 'status still pending');
+    expect(d, bundle.includes("Passwords don't match."), 'inline mismatch message is in the UI (button stays disabled)');
+  }, 'type two different passwords — "Passwords don\'t match." shows and the button stays disabled.');
+
+  await test('A3', 'Matching passwords → dev_local_credentials row (hashed), status active, Page 2', async (d) => {
+    const r = await setPassword(add.jar, TEST_PASSWORD);
+    expect(d, r.status === 200 && r.body.redirect === '/personalize', `→ ${r.status}, redirect ${r.body.redirect}`);
+    const [cred] = await q('SELECT password_hash, created_at FROM dev_local_credentials WHERE coach_id = $1', [add.id]);
+    expect(d, cred && cred.password_hash !== TEST_PASSWORD && !cred.password_hash.includes(TEST_PASSWORD) && cred.password_hash.startsWith('scrypt$'), `row written, hashed (${String(cred?.password_hash).slice(0, 24)}…)`);
+    expect(d, (await coachByEmail(addA)).status === 'active', 'status flipped to active');
+    expect(d, (await req(add.jar, '/api/v1/app/me')).status === 200, 'signed in: Page 2 reachable');
+    const cols = await q("SELECT column_name FROM information_schema.columns WHERE table_name = 'coaches' AND column_name ILIKE '%password%'");
+    expect(d, cols.length === 0, 'no password data in the coaches table');
+  });
+
+  await test('A4', 'Log in with that email + password → straight to Portfolio (Page 2 skipped)', async (d) => {
+    const r = await login(addA, TEST_PASSWORD);
+    expect(d, r.status === 200 && r.body.redirect === '/portfolio', `→ ${r.status}, redirect ${r.body.redirect}`);
+    const p = await portfolio(r.jar, add.id);
+    expect(d, p.coach_email === addA, 'the new session can open its Portfolio');
+    const upper = await login(addA.toUpperCase(), TEST_PASSWORD);
+    expect(d, upper.status === 200, 'email is matched case-insensitively');
+  }, 'open /login, enter the email and password — the Portfolio opens directly.');
+
+  await test('A5', 'Right email, wrong password → plain "incorrect" message, not a fallback screen', async (d) => {
+    const r = await login(addA, 'wrong-password-9');
+    expect(d, r.status === 401 && r.body.message === 'Email or password is incorrect.', `→ ${r.status}: "${r.body.message}"`);
+    expect(d, !r.body.redirect, 'no redirect to /signin/error');
+    const unknown = await login(`nobody.${RUN}.acceptance@example.com`, TEST_PASSWORD);
+    expect(d, unknown.status === 401 && unknown.body.message === r.body.message, 'unknown email gets the same message');
+    const social = await login(GOOGLE_EMAIL, TEST_PASSWORD);
+    expect(d, social.status === 401, 'a Google coach has no password to log in with');
+  }, 'enter a wrong password on /login — "Email or password is incorrect." shows on the same screen.');
+
+  await test('A6', 'Already-used magic link clicked again → expired-link screen, not Set Password', async (d) => {
+    const again = await req(new Jar(), add.link);
+    expect(d, loc(again) === '/signin/error?reason=expired&provider=email', `→ ${loc(again)}`);
+    const stale = await setPassword(add.jar, 'another-pass-1');
+    expect(d, stale.status === 401, `setting a password again is refused (${stale.status})`);
+  }, 'click the same Mailpit link again.');
+
+  await test('A7', 'Google and LinkedIn sign-in and re-sign-in unchanged', async (d) => {
+    const g = await socialSignIn('google');
+    expect(d, g.location === '/personalize', `Google re-sign-in → ${g.location}`);
+    const l = await socialSignIn('linkedin');
+    expect(d, l.location === '/personalize', `LinkedIn re-sign-in → ${l.location}`);
+    const [n] = await q('SELECT count(*)::int n FROM coaches WHERE lower(coach_email) IN ($1, $2)', [GOOGLE_EMAIL, LINKEDIN_EMAIL]);
+    expect(d, n.n === 2, 'still one row each, no duplicates');
+    const [creds] = await q('SELECT count(*)::int n FROM dev_local_credentials d JOIN coaches c USING (coach_id) WHERE c.auth_provider <> $1', ['email']);
+    expect(d, creds.n === 0, 'no password rows for Google/LinkedIn coaches');
+  });
+
   console.log('\n======================= SUMMARY =======================');
   const names = {
     1: 'Google', 2: 'LinkedIn', 3: 'Email submit', 4: 'Magic link', 5: 'Used/expired link', 6: 'Account conflict',
     7: 'User cancelled', 8: 'Exchange failure', 9: 'Website story', 10: 'Resume story', 11: 'Quick questions',
     12: 'Empty skip', 13: 'Shimmer', 14: 'Edit fields', 15: 'Photo upload', 16: 'Package buttons', 17: 'Photo URL', T: 'Tenancy',
+    D: 'One email, one acct', A1: 'Link → Set password', A2: 'Password mismatch', A3: 'Password saved', A4: 'Login → Portfolio',
+    A5: 'Wrong password', A6: 'Used link again', A7: 'Google/LinkedIn same',
   };
   for (const r of results) console.log(`${`${r.n}. ${names[r.n]} `.padEnd(24, '.')} ${r.pass ? 'PASS' : 'FAIL'}${r.manual ? '  (+ browser check)' : ''}`);
   const failed = results.filter((r) => !r.pass).length;

@@ -796,6 +796,7 @@ textarea {
   height: 96px;
   border-radius: 16px;
   object-fit: cover;
+  object-position: center 15%;
   display: block;
   background: linear-gradient(135deg, #c9aee8, #6d3fa0);
 }
@@ -805,7 +806,8 @@ textarea {
   height: 200px;
   border-radius: 18px;
   object-fit: cover;
-  object-position: center 30%;
+  /* Keep the head in view: portrait photos in this wide box crop from the top. */
+  object-position: center 12%;
   display: block;
   background: linear-gradient(135deg, #c9aee8, #6d3fa0);
 }
@@ -1416,4 +1418,22 @@ button.photo-placeholder:hover:not(:disabled) {
   .nav-note {
     display: none !important;
   }
+}
+
+/* ---------- Epic 1 addendum: Login + Set password ---------- */
+.field-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.field-label-row .field-label {
+  margin-bottom: 0;
+}
+.forgot-link {
+  font-size: 12.5px;
+  cursor: default;
+}
+a.link-button {
+  text-decoration: none;
 }

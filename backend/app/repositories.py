@@ -118,8 +118,8 @@ def insert_token(token_hash: str, coach_id: str, ttl_hours: int):
 
 
 def consume_token(raw: str) -> tuple[str, str | None]:
-    """Story 5 step 5, inside one transaction with the row locked.
-    Returns (status, coach_id): not_found | used | expired | ok."""
+    """Story 5 step 5, inside one transaction with the row locked: marks the
+    token used. Returns (status, coach_id): not_found | used | expired | ok."""
     if not raw or len(raw) > 200:
         return "not_found", None
     token_hash = hash_token(raw)
@@ -134,8 +134,19 @@ def consume_token(raw: str) -> tuple[str, str | None]:
         if row["expires_at"] <= datetime.now(timezone.utc):
             return "expired", coach_id
         conn.execute("UPDATE magic_link_tokens SET used_at = now() WHERE token = %s", (token_hash,))
-        conn.execute("UPDATE coaches SET status = 'active', updated_at = now() WHERE coach_id = %s", (coach_id,))
+        # Epic 1 addendum, Story 1: the click only proves the email. The coach
+        # stays 'pending' until a password is set (see activate_coach).
         return "ok", coach_id
+
+
+def lock_coach(conn, coach_id: str):
+    """SELECT ... FOR UPDATE inside the caller's transaction."""
+    return _row(conn.execute(f"SELECT {COLUMNS} FROM coaches WHERE coach_id = %s FOR UPDATE", (coach_id,)).fetchone())
+
+
+def activate_coach(conn, coach_id: str):
+    """Epic 1 addendum, Story 1: pending -> active, only once the password is saved."""
+    conn.execute("UPDATE coaches SET status = 'active', updated_at = now() WHERE coach_id = %s AND status = 'pending'", (coach_id,))
 
 
 # ------------------------------------------------------ llm_use / tool_use

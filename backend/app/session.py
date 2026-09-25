@@ -55,3 +55,30 @@ def take_oauth_state(request: Request, response: Response) -> dict | None:
     except BadSignature:
         return None
     return data if isinstance(data, dict) else None
+
+
+# Epic 1 addendum: after the magic-link click the coach is still 'pending' and
+# has no session. This short-lived signed cookie only allows setting the
+# password for that one coach; it grants nothing else.
+SETUP_COOKIE = "sc_pw_setup"
+_SETUP_AGE = 30 * 60
+_setup = URLSafeTimedSerializer(settings.session_secret, salt="password-setup")
+
+
+def set_password_setup(response: Response, coach_id: str):
+    response.set_cookie(SETUP_COOKIE, _setup.dumps(coach_id), max_age=_SETUP_AGE, httponly=True, samesite="lax", path="/")
+
+
+def clear_password_setup(response: Response):
+    response.delete_cookie(SETUP_COOKIE, path="/")
+
+
+def get_password_setup_coach_id(request: Request) -> str | None:
+    raw = request.cookies.get(SETUP_COOKIE)
+    if not raw:
+        return None
+    try:
+        value = _setup.loads(raw, max_age=_SETUP_AGE)
+    except BadSignature:
+        return None
+    return value if is_uuid(value) else None

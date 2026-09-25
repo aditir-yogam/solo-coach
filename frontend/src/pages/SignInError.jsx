@@ -24,7 +24,7 @@ export default function SignInError() {
         navigate('/join?focus=email');
         break;
       case 'login':
-        navigate('/join?login=1');
+        navigate('/login');
         break;
       default:
         navigate('/join');

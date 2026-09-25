@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { BrandPanel, StepIndicator } from '../components/Brand';
 import { SparkIcon, PersonIcon, CalendarIcon, GoogleLogo, LinkedinLogo } from '../components/Icons';
 import { api } from '../lib/api';
@@ -13,10 +13,12 @@ const POINTS = [
   { icon: <CalendarIcon />, text: 'A live portfolio page is ready before your first client call.' },
 ];
 
-// Page 1 (Story 2). Copy per the epic: no password field, magic-link helper
-// text, "Send me a sign-in link", "Step 1 of 2 — Create your account".
+// Page 1 (Story 2). "Send me a sign-in link", "Step 1 of 2 — Create your account".
 // Tenancy: /join -> solo coach; /join?org=<code> -> institute coach (the code
 // travels with every sign-in path and is resolved on the server).
+// Epic 1 addendum: the emailed link is used once to confirm the address, then
+// the coach sets a password. One email = one account: an email that is already
+// registered is refused here with an inline message; returning coaches use /login.
 export default function SignUp() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -25,19 +27,20 @@ export default function SignUp() {
   const [errors, setErrors] = useState({});
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [loginMode, setLoginMode] = useState(params.get('login') === '1');
+  const [registered, setRegistered] = useState(''); // '', 'active' or 'pending'
+  const [resendNote, setResendNote] = useState('');
   const org = params.get('org') || '';
   const orgQuery = org ? `?org=${encodeURIComponent(org)}` : '';
   const emailRef = useRef(null);
   const nameRef = useRef(null);
 
   useEffect(() => {
-    if (params.get('focus') === 'email' || params.get('login') === '1') emailRef.current?.focus();
+    if (params.get('focus') === 'email') emailRef.current?.focus();
   }, [params]);
 
   function validate() {
     const next = {};
-    if (!loginMode && !name.trim()) next.name = 'Please enter your full name.';
+    if (!name.trim()) next.name = 'Please enter your full name.';
     if (!email.trim()) next.email = 'Please enter your email address.';
     else if (!EMAIL_RE.test(email.trim())) next.email = 'Please enter a valid email address.';
     setErrors(next);
@@ -50,6 +53,8 @@ export default function SignUp() {
     e.preventDefault();
     if (submitting) return;
     setFormError('');
+    setRegistered('');
+    setResendNote('');
     if (!validate()) return;
     setSubmitting(true);
     try {
@@ -64,8 +69,11 @@ export default function SignUp() {
         navigate('/signin/error?reason=provider&provider=email');
         return;
       }
-      if (err.code === 'name_required') {
-        setLoginMode(false);
+      if (err.code === 'email_registered' || err.code === 'email_pending') {
+        setRegistered(err.code === 'email_registered' ? 'active' : 'pending');
+        setErrors({ email: err.message });
+        emailRef.current?.focus();
+      } else if (err.code === 'name_required') {
         setErrors({ name: err.message });
         nameRef.current?.focus();
       } else if (err.code?.startsWith('email')) {
@@ -77,10 +85,14 @@ export default function SignUp() {
     }
   }
 
-  function switchToLogin() {
-    setLoginMode(true);
-    setErrors({});
-    emailRef.current?.focus();
+  async function resendLink() {
+    setResendNote('Sending…');
+    try {
+      await api.requestMagicLink(name.trim(), email.trim(), org, true);
+      setResendNote('A new link is on its way — check your inbox.');
+    } catch (err) {
+      setResendNote(err.message);
+    }
   }
 
   return (
@@ -102,7 +114,7 @@ export default function SignUp() {
           <form className="fields" onSubmit={handleSubmit} noValidate>
             <div className="field">
               <label className="field-label" htmlFor="fullname">
-                Full name {loginMode && <span className="optional">(optional when logging in)</span>}
+                Full name
               </label>
               <input
                 ref={nameRef}
@@ -136,17 +148,39 @@ export default function SignUp() {
                 autoComplete="email"
                 maxLength={254}
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (registered) {
+                    setRegistered('');
+                    setResendNote('');
+                    setErrors({});
+                  }
+                }}
                 aria-invalid={Boolean(errors.email)}
                 aria-describedby={errors.email ? 'email-error' : 'email-help'}
               />
               {errors.email ? (
-                <p className="field-error" id="email-error">
-                  {errors.email}
+                <p className="field-error" id="email-error" data-testid="email-error">
+                  {errors.email}{' '}
+                  {registered === 'active' && (
+                    <Link className="link-button" to="/login">
+                      Log in
+                    </Link>
+                  )}
+                  {registered === 'pending' && (
+                    <button type="button" className="link-button" onClick={resendLink}>
+                      Resend link
+                    </button>
+                  )}
                 </p>
               ) : (
                 <p className="field-help" id="email-help">
-                  No password needed — we'll email you a sign-in link. It's valid for 24 hours.
+                  We'll email you a link to confirm your address, then you'll set a password. The link is valid for 24 hours.
+                </p>
+              )}
+              {resendNote && (
+                <p className="field-help" role="status">
+                  {resendNote}
                 </p>
               )}
             </div>
@@ -180,9 +214,9 @@ export default function SignUp() {
 
           <p className="muted-line">
             Already have an account?{' '}
-            <button type="button" className="link-button" onClick={switchToLogin}>
+            <Link className="link-button" to="/login">
               Log in
-            </button>
+            </Link>
           </p>
         </div>
       </main>

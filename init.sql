@@ -59,3 +59,12 @@ CREATE TABLE tool_use (
     error_message   TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Epic 1 addendum: DEV-ONLY table. Lets the email set-password / login flow be
+-- tested locally. In production Cognito owns passwords; this table is never
+-- migrated and is replaced by Cognito calls in the completion pass.
+CREATE TABLE dev_local_credentials (
+    coach_id        UUID PRIMARY KEY REFERENCES coaches(coach_id),
+    password_hash   TEXT NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);

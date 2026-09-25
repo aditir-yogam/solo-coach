@@ -17,7 +17,7 @@ export default function CheckEmail() {
     setSending(true);
     setResent('');
     try {
-      await api.requestMagicLink(state.name || '', state.email, state.org || '');
+      await api.requestMagicLink(state.name || '', state.email, state.org || '', true);
       setResent('A new link is on its way.');
     } catch (err) {
       setResent(err.message);
@@ -36,8 +36,8 @@ export default function CheckEmail() {
         <div className="center-copy">
           <h2>Check your email</h2>
           <p>
-            We sent a sign-in link to <strong style={{ color: 'var(--ink)' }}>{state.email}</strong>. Click it to continue —
-            it works once and is valid for 24 hours.
+            We sent a link to <strong style={{ color: 'var(--ink)' }}>{state.email}</strong>. Click it to confirm your
+            email and set your password — it works once and is valid for 24 hours.
           </p>
         </div>
         <div className="center-actions">
