@@ -807,7 +807,7 @@ textarea {
   border-radius: 18px;
   object-fit: cover;
   /* Keep the head in view: portrait photos in this wide box crop from the top. */
-  object-position: center 12%;
+  object-position: center 30%;
   display: block;
   background: linear-gradient(135deg, #c9aee8, #6d3fa0);
 }
